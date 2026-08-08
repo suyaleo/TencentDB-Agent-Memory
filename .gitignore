@@ -59,6 +59,7 @@ sdk/python/*.egg-info/
 # Environment (already covered above, explicit for clarity)
 .env.*
 !.env.example
+!.env.shared-brain.example
 deploy/shared-brain/.runtime/
 integrations/shared-brain-mcp/.venv/
 
