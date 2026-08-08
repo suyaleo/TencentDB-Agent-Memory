@@ -2,7 +2,7 @@
 set -euo pipefail
 AGENT="${1:?usage: run-agent.sh hermes|codex|grok|agy}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-RUNTIME="$ROOT/deploy/shared-brain/.runtime"
+RUNTIME="${SHARED_BRAIN_RUNTIME_DIR:-/srv/leostudio/config/tencentdb-agent-memory/runtime}"
 set -a
 # shellcheck disable=SC1091
 source "$RUNTIME/mcp.env"

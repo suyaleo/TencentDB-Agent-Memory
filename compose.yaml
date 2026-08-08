@@ -13,8 +13,8 @@ services:
       TDAI_GATEWAY_API_KEY: "${MEMORY_CORE_GATEWAY_API_KEY:-}"
       TDAI_DATA_DIR: /data/tdai-memory
     volumes:
-      - memory-core-data:/data/tdai-memory
-      - ./deploy/shared-brain/.runtime/tdai-gateway.yaml:/data/config/tdai-gateway.yaml:ro
+      - ${MEMORY_CORE_DATA_DIR:-/srv/leostudio/data/tencentdb-agent-memory/memory-core}:/data/tdai-memory
+      - ${TDAI_GATEWAY_CONFIG:-/srv/leostudio/config/tencentdb-agent-memory/runtime/tdai-gateway.yaml}:/data/config/tdai-gateway.yaml:ro
     extra_hosts:
       - host.docker.internal:host-gateway
     healthcheck:
@@ -46,7 +46,7 @@ services:
       LLM_API_KEY: "${MEMORY_LLM_API_KEY}"
       LLM_MODEL: "${MEMORY_LLM_MODEL}"
     volumes:
-      - memory-panel-data:/data/knowledge
+      - ${MEMORY_PANEL_DATA_DIR:-/srv/leostudio/data/tencentdb-agent-memory/memory-panel}:/data/knowledge
     networks: [shared-brain]
 
   memory-proxy:
@@ -66,9 +66,3 @@ services:
 networks:
   shared-brain:
     name: tdai-memory-stack
-
-volumes:
-  memory-core-data:
-    name: tdai-memory-core-data
-  memory-panel-data:
-    name: tdai-panel-data

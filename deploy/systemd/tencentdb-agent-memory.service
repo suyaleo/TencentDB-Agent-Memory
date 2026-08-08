@@ -1,6 +1,6 @@
 [Unit]
 Description=TencentDB Agent Memory shared multi-agent brain
-Documentation=file:///home/leo/.hermes/TencentDB-Agent-Memory/docs/studio-continuity.md
+Documentation=file:///srv/leostudio/apps/tencentdb-agent-memory/docs/studio-continuity.md
 Requires=docker.service
 After=docker.service network-online.target
 Wants=network-online.target
@@ -10,11 +10,13 @@ Type=oneshot
 RemainAfterExit=yes
 User=leo
 Group=docker
-WorkingDirectory=/home/leo/.hermes/TencentDB-Agent-Memory
-Environment=SHARED_BRAIN_ENV_FILE=/home/leo/.hermes/TencentDB-Agent-Memory/.env.shared-brain
-ExecStart=/home/leo/.hermes/TencentDB-Agent-Memory/deploy/shared-brain-start.sh
-ExecReload=/usr/bin/docker compose --env-file /home/leo/.hermes/TencentDB-Agent-Memory/.env.shared-brain up -d --wait memory-core memory-hub
-ExecStop=/usr/bin/docker compose --env-file /home/leo/.hermes/TencentDB-Agent-Memory/.env.shared-brain stop memory-hub memory-core
+WorkingDirectory=/srv/leostudio/apps/tencentdb-agent-memory
+Environment=SHARED_BRAIN_CONFIG_ROOT=/srv/leostudio/config/tencentdb-agent-memory
+Environment=SHARED_BRAIN_ENV_FILE=/srv/leostudio/config/tencentdb-agent-memory/env.shared-brain
+Environment=SHARED_BRAIN_RUNTIME_DIR=/srv/leostudio/config/tencentdb-agent-memory/runtime
+ExecStart=/srv/leostudio/apps/tencentdb-agent-memory/deploy/shared-brain-start.sh
+ExecReload=/usr/bin/docker compose --env-file /srv/leostudio/config/tencentdb-agent-memory/env.shared-brain up -d --wait memory-core memory-hub
+ExecStop=/usr/bin/docker compose --env-file /srv/leostudio/config/tencentdb-agent-memory/env.shared-brain stop memory-hub memory-core
 TimeoutStartSec=600
 TimeoutStopSec=120
 Restart=on-failure
