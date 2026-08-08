@@ -25,6 +25,7 @@ import {
 } from 'tea-icons-react';
 import { userConfigApi, type AssetCapabilityKey } from '@/lib/teamApi';
 import { tea } from '@/lib/tea-bridge';
+import { readTheme, writeTheme, type StudioTheme } from '@/theme';
 
 // ===== 资源模块 =====
 
@@ -82,6 +83,12 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [savingKey, setSavingKey] = useState<AssetCapabilityKey | null>(null);
   const [error, setError] = useState('');
+  const [theme, setTheme] = useState<StudioTheme>(() => readTheme());
+
+  function chooseTheme(next: StudioTheme) {
+    writeTheme(next);
+    setTheme(next);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -138,6 +145,30 @@ export function SettingsDialog({ onClose }: { onClose: () => void }) {
             </Text>
             {error && <Alert type="error" style={{ marginBottom: 12 }}>{error}</Alert>}
             {loading && <Alert type="info" style={{ marginBottom: 12 }}>{t('settings.loadingConfig')}</Alert>}
+
+            <div style={{ marginBottom: 16 }}>
+              <Text theme="label" style={{ display: 'block', marginBottom: 8 }}>Theme</Text>
+              <div role="group" aria-label="Theme preference" style={{ display: 'flex', gap: 6 }}>
+                {(['light', 'dark', 'system'] as StudioTheme[]).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    aria-pressed={theme === option}
+                    onClick={() => chooseTheme(option)}
+                    style={{
+                      minHeight: 32,
+                      padding: '0 12px',
+                      border: `1px solid ${theme === option ? 'var(--studio-accent)' : 'var(--studio-border)'}`,
+                      borderRadius: 6,
+                      color: 'var(--studio-text)',
+                      background: theme === option ? 'var(--studio-accent-soft)' : 'var(--studio-raised)',
+                    }}
+                  >
+                    {option[0].toUpperCase() + option.slice(1)}
+                  </button>
+                ))}
+              </div>
+            </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               {RESOURCE_MODULES.map((mod) => (

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "distributionProfile": "private-venture",
+  "displayName": "TencentDB Agent Memory Studio",
+  "repository": "TencentDB-Agent-Memory",
+  "slug": "tencentdb-agent-memory",
+  "version": "2.0.0",
+  "license": "MIT",
+  "container": "docker.io/agentmemory/memory-core",
+  "defaultPort": 8125,
+  "healthEndpoint": "/health",
+  "dataDirectory": "/data/tdai-memory",
+  "aiProfile": "tencentdb-agent-memory",
+  "validatorCompatibility": "Known incompatible with supplied Studio schema: user-authorized upstream MIT license and TencentDB-Agent-Memory identity take precedence."
+}

@@ -1,0 +1,27 @@
+{
+  "$schema": "https://studio.example.invalid/schemas/project-v1.json",
+  "schema_version": "studio.project.v1",
+  "project": {
+    "name": "TencentDB-Agent-Memory",
+    "display_name": "TencentDB Agent Memory — Shared Brain",
+    "upstream_repository": "Tencent/TencentDB-Agent-Memory",
+    "license": "MIT",
+    "architecture": "upstream-preserving-overlay",
+    "primary_deployment": "Ubuntu + Docker Compose",
+    "agents": ["hermes", "codex-cli", "grok-cli", "agy-cli"]
+  },
+  "studio_validator": {
+    "status": "known-incompatible",
+    "reason": "The provided Studio validator schema rejects the MIT license and the upstream repository name.",
+    "license_validation": "rejected-by-provided-schema",
+    "repository_name_validation": "rejected-by-provided-schema",
+    "source_of_truth": "LICENSE and upstream repository identity remain unchanged",
+    "do_not_modify": ["LICENSE", "upstream repository name"]
+  },
+  "continuity": {
+    "start_contract": "./studio/start-contract.json",
+    "release_contract": "./studio/release-contract.json",
+    "deployment": "./compose.yaml",
+    "mcp_entrypoint": "./integrations/shared-brain-mcp/server.py"
+  }
+}

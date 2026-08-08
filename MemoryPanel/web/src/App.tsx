@@ -19,6 +19,7 @@ import { ConfigProvider } from 'tea-component';
 import LoginGate from '@/components/LoginGate';
 import { useAuthStore } from '@/stores/auth';
 import { router } from '@/routes';
+import { readTheme, subscribeTheme } from '@/theme';
 
 /** react-i18next 语言 → tea-component locale 映射 */
 function toTeaLocale(lang: string): 'zh' | 'en' {
@@ -32,6 +33,8 @@ export default function App() {
   const checkSession = useAuthStore((s) => s.checkSession);
   // 当前 tea-component locale，跟 react-i18next 同步
   const [teaLocale, setTeaLocale] = useState<'zh' | 'en'>(() => toTeaLocale(i18n.language));
+
+  useEffect(() => subscribeTheme(readTheme()), []);
 
   // 监听 react-i18next 语言切换，同步给 tea-component
   useEffect(() => {

@@ -1,0 +1,24 @@
+[Unit]
+Description=TencentDB Agent Memory shared multi-agent brain
+Documentation=file:///home/leo/.hermes/TencentDB-Agent-Memory/docs/studio-continuity.md
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=leo
+Group=docker
+WorkingDirectory=/home/leo/.hermes/TencentDB-Agent-Memory
+Environment=SHARED_BRAIN_ENV_FILE=/home/leo/.hermes/TencentDB-Agent-Memory/.env.shared-brain
+ExecStart=/home/leo/.hermes/TencentDB-Agent-Memory/deploy/shared-brain-start.sh
+ExecReload=/usr/bin/docker compose --env-file /home/leo/.hermes/TencentDB-Agent-Memory/.env.shared-brain up -d --wait memory-core memory-hub
+ExecStop=/usr/bin/docker compose --env-file /home/leo/.hermes/TencentDB-Agent-Memory/.env.shared-brain stop memory-hub memory-core
+TimeoutStartSec=600
+TimeoutStopSec=120
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

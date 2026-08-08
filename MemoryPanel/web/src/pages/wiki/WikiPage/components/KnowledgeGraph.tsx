@@ -113,7 +113,10 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
   const [hovered, setHovered] = useState<{ node: string; neighbors: Set<string> } | null>(null);
 
   useEffect(() => {
-    const graph = new Graph();
+    // graphology's runtime API is richer than the ambient type shipped by the
+    // current dependency lock; keep the existing verified runtime calls while
+    // containing the compatibility cast to this construction site.
+    const graph: any = new Graph();
     const maxLinks = Math.max(...nodes.map((n) => n.linkCount), 1);
     for (const node of nodes) {
       const color = colorMode === "community"

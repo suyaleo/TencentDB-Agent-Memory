@@ -1,0 +1,23 @@
+{
+  "contract": "studio.start.v1",
+  "intent": "Start the Ubuntu-deployed shared brain without replacing any agent inference or OAuth route.",
+  "preconditions": [
+    "Docker Engine and Docker Compose v2 are installed",
+    "An operator-owned .env file supplies image tags and runtime endpoints",
+    "No credential values are committed to the repository"
+  ],
+  "command": "./deploy/shared-brain-start.sh",
+  "services": {
+    "memory-core": "127.0.0.1:8420",
+    "memory-hub": "127.0.0.1:8125",
+    "knowledge": "127.0.0.1:8424",
+    "proxy": "127.0.0.1:8096",
+    "shared-brain-mcp": "stdio-only; launched by each CLI"
+  },
+  "preservation_rules": [
+    "Keep the existing model/provider/OAuth settings for each CLI",
+    "Add the shared-brain MCP registration as an additional tool provider",
+    "Use dry-run inventory/import unless --apply is explicitly supplied",
+    "Keep LICENSE unchanged"
+  ]
+}

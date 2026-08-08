@@ -1,0 +1,20 @@
+name: Release Validation
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+jobs:
+  release-validation:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Preserve upstream identity
+        run: |
+          grep -q 'licensed under the MIT' LICENSE
+          test "${GITHUB_REPOSITORY##*/}" = TencentDB-Agent-Memory
+      - name: Build Studio Memory Hub image
+        run: docker build -t tencentdb-agent-memory:${GITHUB_REF_NAME} .
+      - name: No implicit publication
+        run: echo 'Image publication and GitHub Release creation require a separately approved workflow change.'

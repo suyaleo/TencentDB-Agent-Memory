@@ -1,0 +1,16 @@
+{
+  "contract": "studio.release.v1",
+  "required_checks": [
+    "python3 -m unittest discover -s integrations/shared-brain-mcp/tests -p 'test_*.py'",
+    "pnpm --dir MemoryPanel/web build",
+    "pnpm --dir MemoryPanel test -- --run",
+    "docker compose config"
+  ],
+  "security_checks": [
+    "Run integrations/shared-brain-mcp/scripts/inventory_agents.py with --json",
+    "Confirm no raw credential values occur in generated artifacts",
+    "Confirm compose ports bind to 127.0.0.1 by default",
+    "Confirm LICENSE has not changed"
+  ],
+  "release_boundary": "This overlay adds integrations, deployment wrappers, documentation, and UI status/theme work; it does not fork or replace MemoryCore inference, proxy, or OAuth behavior."
+}

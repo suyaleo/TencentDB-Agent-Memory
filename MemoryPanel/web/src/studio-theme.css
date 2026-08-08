@@ -1,0 +1,47 @@
+html[data-theme="light"] {
+  --studio-canvas: #f4f5f7;
+  --studio-toolbar: #ffffff;
+  --studio-panel: #ffffff;
+  --studio-raised: #f7f8fa;
+  --studio-border: #d8dbe1;
+  --studio-text: #20242c;
+  --studio-text-muted: #667085;
+  --studio-accent: #e66a2c;
+  --studio-accent-hover: #c9521c;
+  --studio-accent-soft: #fff0e7;
+  color-scheme: light;
+}
+
+html[data-theme="dark"] {
+  --studio-canvas: #111318;
+  --studio-toolbar: #171a20;
+  --studio-panel: #1c2028;
+  --studio-raised: #242933;
+  --studio-border: #343a46;
+  --studio-text: #f3f4f6;
+  --studio-text-muted: #a3aab8;
+  --studio-accent: #ff7a38;
+  --studio-accent-hover: #ff915e;
+  --studio-accent-soft: #3b251d;
+  color-scheme: dark;
+}
+
+html[data-theme] body {
+  background: var(--studio-canvas);
+  color: var(--studio-text);
+}
+
+html[data-theme] button:focus-visible,
+html[data-theme] input:focus-visible,
+html[data-theme] select:focus-visible,
+html[data-theme] textarea:focus-visible {
+  outline-color: var(--studio-accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

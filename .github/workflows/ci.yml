@@ -1,0 +1,22 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: MemoryPanel/web/package-lock.json
+      - run: npm ci --legacy-peer-deps --no-audit --no-fund
+        working-directory: MemoryPanel/web
+      - run: npm run build
+        working-directory: MemoryPanel/web
+      - run: python3 -m venv integrations/shared-brain-mcp/.venv
+      - run: integrations/shared-brain-mcp/.venv/bin/pip install -r integrations/shared-brain-mcp/requirements.txt
+      - run: integrations/shared-brain-mcp/.venv/bin/python -m unittest discover -s integrations/shared-brain-mcp/tests -p 'test_*.py' -v
+      - run: docker compose --env-file .env.shared-brain.example config --quiet

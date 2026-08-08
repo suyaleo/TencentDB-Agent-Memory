@@ -1,0 +1,74 @@
+name: tencentdb-agent-memory
+
+services:
+  memory-core:
+    image: ${MEMORY_CORE_IMAGE:-agentmemory/memory-core@sha256:e96a0d20ab14388b3961c5ecc1dd26d48277894c050d40c2c0b9180fb937a4cc}
+    container_name: tdai-memory-core
+    restart: unless-stopped
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${MEMORY_CORE_PORT:-8420}:8420"
+    environment:
+      TDAI_GATEWAY_PORT: "8420"
+      TDAI_GATEWAY_HOST: "0.0.0.0"
+      TDAI_GATEWAY_API_KEY: "${MEMORY_CORE_GATEWAY_API_KEY:-}"
+      TDAI_DATA_DIR: /data/tdai-memory
+    volumes:
+      - memory-core-data:/data/tdai-memory
+      - ./deploy/shared-brain/.runtime/tdai-gateway.yaml:/data/config/tdai-gateway.yaml:ro
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8420/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    networks: [shared-brain]
+
+  memory-hub:
+    image: ${MEMORY_HUB_IMAGE:-agentmemory/memory-hub@sha256:3afaa9f8c23ae0648e8d456a9582b67b247b1c2aecceeedd04373ebc27e8f530}
+    container_name: tdai-memory-hub
+    restart: unless-stopped
+    depends_on:
+      memory-core:
+        condition: service_healthy
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PANEL_PORT:-8125}:8125"
+      - "${BIND_ADDRESS:-127.0.0.1}:${KNOWLEDGE_PORT:-8424}:8424"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    environment:
+      REMOTE_INSTANCE_URL: http://memory-core:8420
+      REMOTE_INSTANCE_KEY: "${MEMORY_CORE_GATEWAY_API_KEY:-local}"
+      KNOWLEDGE_PUBLIC_BASE_URL: "${KNOWLEDGE_PUBLIC_BASE_URL:-http://127.0.0.1:8424/v3}"
+      LLM_MODE: custom
+      LLM_BASE_URL: "${MEMORY_LLM_BASE_URL}"
+      LLM_API_KEY: "${MEMORY_LLM_API_KEY}"
+      LLM_MODEL: "${MEMORY_LLM_MODEL}"
+    volumes:
+      - memory-panel-data:/data/knowledge
+    networks: [shared-brain]
+
+  memory-proxy:
+    image: ${PROXY_IMAGE:-agentmemory/memory-proxy@sha256:a80b4594a2e737f6a094b3583d68d739cd1389e073a42b39f925f94dfd1f66d0}
+    container_name: tdai-memory-proxy
+    restart: unless-stopped
+    profiles: [proxy]
+    depends_on:
+      memory-core:
+        condition: service_healthy
+    ports:
+      - "${BIND_ADDRESS:-127.0.0.1}:${PROXY_PORT:-8096}:8096"
+    volumes:
+      - ./deploy/shared-brain/proxy-config.yaml:/data/config.yaml:ro
+    networks: [shared-brain]
+
+networks:
+  shared-brain:
+    name: tdai-memory-stack
+
+volumes:
+  memory-core-data:
+    name: tdai-memory-core-data
+  memory-panel-data:
+    name: tdai-panel-data

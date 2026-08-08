@@ -7,6 +7,7 @@ import './i18n';
 import 'tea-component/dist/themes/default-pack.css';
 import 'tea-component/dist/tea-themeable.css';
 import './index.css';
+import './studio-theme.css';
 import './tea-override.css';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
