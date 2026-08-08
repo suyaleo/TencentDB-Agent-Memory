@@ -8,8 +8,19 @@
   gap: 20px;
 }
 
+._tdai-login-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+._tdai-login-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--tea-color-text-secondary);
+}
+
 ._tdai-login-hint {
-  margin-top: 4px;
   font-size: 12px;
   color: var(--tea-color-text-tertiary);
 }

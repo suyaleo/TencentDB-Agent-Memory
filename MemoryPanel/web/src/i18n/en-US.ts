@@ -56,13 +56,16 @@ export const enUS = {
 
   // ===== LoginGate =====
   'login.welcome': 'Welcome Back',
-  'login.subtitle': 'Please select a memory instance and enter your user_key to log in.',
+  'login.subtitle': 'Keep the default memory instance selected and enter your admin user_key.',
   'login.tagline': 'Centrally manage Agent memory, skills, and knowledge assets',
+  'login.label.instance': 'Memory instance (not a user ID)',
+  'login.hint.instance': '“default” is the configured Memory Core instance. Leave it selected.',
+  'login.label.userKey': 'Admin user_key (login credential)',
   'login.placeholder.instance': 'Loading memory instances…',
   'login.placeholder.instanceError': 'Load failed, please refresh and retry',
   'login.placeholder.userKey': 'user_key, e.g. sk-mem-xxxxxxxxxxxxxxxx',
   'login.hint.userKey':
-    "Use the user_key assigned by your admin. If you don't have one, contact your team admin.",
+    'Paste the complete admin.key value here. The account resolves to admin after verification.',
   'login.submit': 'Log In',
   'login.submitting': 'Logging in…',
   'login.error.loadInstances':

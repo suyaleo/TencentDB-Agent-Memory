@@ -329,22 +329,27 @@ export default function LoginGate({
           </p>
 
           <form onSubmit={submit} className="mt-8 _tdai-login-form">
-            {/* 记忆实例选择 — GET /api/v1/meta/instances */}
-            <Select
-              appearance="button"
-              size="full"
-              value={instanceId}
-              onChange={(value) => {
-                setInstanceId(value);
-                setError(null);
-              }}
-              disabled={submitting || instances.length === 0}
-              placeholder={instancesError ? t('login.placeholder.instanceError') : t('login.placeholder.instance')}
-              options={instances.map((inst) => ({ value: inst.instance_id, text: inst.name }))}
-            />
+            {/* 记忆实例选择 — GET /api/v1/meta/instances。账号 ID 不是本字段。 */}
+            <label className="_tdai-login-field">
+              <span className="_tdai-login-label">{t('login.label.instance')}</span>
+              <Select
+                appearance="button"
+                size="full"
+                value={instanceId}
+                onChange={(value) => {
+                  setInstanceId(value);
+                  setError(null);
+                }}
+                disabled={submitting || instances.length === 0}
+                placeholder={instancesError ? t('login.placeholder.instanceError') : t('login.placeholder.instance')}
+                options={instances.map((inst) => ({ value: inst.instance_id, text: inst.name }))}
+              />
+              <span className="_tdai-login-hint">{t('login.hint.instance')}</span>
+            </label>
 
             {/* user_key（sk-mem-…），经 auth/verify 验活后写入前端会话 */}
-            <div>
+            <label className="_tdai-login-field">
+              <span className="_tdai-login-label">{t('login.label.userKey')}</span>
               <Input.Password
                 autoFocus
                 size="full"
@@ -359,10 +364,8 @@ export default function LoginGate({
                 disabled={submitting}
                 rules={false}
               />
-              <div className="_tdai-login-hint">
-                {t('login.hint.userKey')}
-              </div>
-            </div>
+              <span className="_tdai-login-hint">{t('login.hint.userKey')}</span>
+            </label>
 
             {error && <Alert type="error">{error}</Alert>}
 

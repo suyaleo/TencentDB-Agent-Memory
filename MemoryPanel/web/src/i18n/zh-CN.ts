@@ -54,12 +54,15 @@ export const zhCN = {
 
   // ===== LoginGate =====
   'login.welcome': '欢迎回来',
-  'login.subtitle': '请选择记忆实例并输入你的 user_key 登录。',
+  'login.subtitle': '保留 default 记忆实例，并输入管理员 user_key 登录。',
   'login.tagline': '集中管理 Agent 的记忆、技能与知识资产',
+  'login.label.instance': '记忆实例（不是用户 ID）',
+  'login.hint.instance': '“default” 是已配置的 Memory Core 实例，请保持选中。',
+  'login.label.userKey': '管理员 user_key（登录凭证）',
   'login.placeholder.instance': '加载记忆实例中…',
   'login.placeholder.instanceError': '加载失败，请刷新重试',
   'login.placeholder.userKey': 'user_key，如 sk-mem-xxxxxxxxxxxxxxxx',
-  'login.hint.userKey': '请使用管理员为你分配的 user_key；若还没有，请联系团队管理员开号。',
+  'login.hint.userKey': '请粘贴 admin.key 的完整值；验证成功后账户会识别为 admin。',
   'login.submit': '登录',
   'login.submitting': '登录中…',
   'login.error.loadInstances': '加载记忆实例列表失败，请刷新页面重试{{detail}}',
