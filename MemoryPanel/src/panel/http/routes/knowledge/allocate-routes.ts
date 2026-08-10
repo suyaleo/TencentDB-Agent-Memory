@@ -233,9 +233,17 @@ export function registerKnowledgeAllocateRoutes(api: Hono, deps: PanelDeps): voi
     if (!subjectType || !subjectId || !permission) {
       return respondControlError(c, 400, 'MISSING_GRANT_FIELDS');
     }
+    const caller = await resolveCallerUserId(deps, ctx);
+    if (!caller) return respondControlError(c, 401, 'INVALID_USER_KEY');
     const env = await deps.metaKernel.invoke(
       'acl/grant',
-      { asset_id: knowledgeId, subject_type: subjectType, subject_id: subjectId, permission },
+      {
+        asset_id: knowledgeId,
+        subject_type: subjectType,
+        subject_id: subjectId,
+        permission,
+        granted_by: caller,
+      },
       ctx,
     );
     return respondEnvelope(c, env);

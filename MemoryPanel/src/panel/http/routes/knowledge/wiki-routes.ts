@@ -6,7 +6,7 @@
  * validatePanelMetaHeaders → auth/verify(+team-member) → KS → envelope。
  *
  * 门控：
- *   - 带 team_id 的端点（list/create/raw/write）→ 要求 team 成员；
+ *   - list/create → 要求 team 成员；raw/write → 要求 asset write ACL 且 body team_id 精确匹配；
  *   - id-only 端点（get/ingest/delete/graph/page/search/raw/ls）→ 要求有效 caller，
  *     KS 按 x-tdai-service-id + team 逻辑隔离。
  */
@@ -243,7 +243,7 @@ export function registerKnowledgeWikiRoutes(api: Hono, deps: PanelDeps): void {
     return runKs(c, () => kc.wikiRawRm(teamId, wikiId, filenames, gate.userId));
   });
 
-  // W9 raw/write — team 门控 + 上传大小限制
+  // W9 raw/write — asset write ACL + 精确 team 归属 + 上传大小限制
   const MAX_FILE_SIZE = 512 * 1024;        // 单文件 512KB
   const MAX_FILES_PER_REQUEST = 10;        // 单次最多 10 个文件
   const MAX_TOTAL_SIZE = 5 * 1024 * 1024;  // 单次总大小 5MB
@@ -271,8 +271,9 @@ export function registerKnowledgeWikiRoutes(api: Hono, deps: PanelDeps): void {
     if (totalSize > MAX_TOTAL_SIZE) {
       return respondControlError(c, 413, `TOTAL_TOO_LARGE (max ${MAX_TOTAL_SIZE} bytes, got ${totalSize})`);
     }
-    const gate = await requireTeamMember(deps, c, ctx, teamId);
+    const gate = await requireKnowledgeRead(deps, c, ctx, wikiId, { action: 'write' });
     if ('error' in gate) return gate.error;
+    if (gate.asset?.team_id !== teamId) return respondControlError(c, 400, 'TEAM_MISMATCH');
     const kc = deps.knowledgeClientFactory(ctx.instanceId);
     return runKs(c, () => kc.wikiRawWrite(teamId, wikiId, files, gate.userId));
   });
