@@ -65,6 +65,15 @@ export KNOWLEDGE_DATA_DIR="${KNOWLEDGE_DATA_DIR:-/data/knowledge}"
 export KNOWLEDGE_DB_PATH="${KNOWLEDGE_DB_PATH:-/data/knowledge/knowledge.db}"
 export KNOWLEDGE_PUBLIC_BASE_URL="${KS_PUBLIC_URL}"
 export TMC_CALLBACK_URL="${TMC_CALLBACK_URL:-http://127.0.0.1:${PANEL_PORT}}"
+# The combined image has one protected Panel→Knowledge hop. Reuse its existing
+# internal gateway credential unless an operator supplies a dedicated, equal
+# pair. Never print either value.
+export KNOWLEDGE_AUTH_TOKEN="${KNOWLEDGE_AUTH_TOKEN:-${REMOTE_INSTANCE_KEY:-}}"
+export KNOWLEDGE_API_TOKEN="${KNOWLEDGE_API_TOKEN:-${KNOWLEDGE_AUTH_TOKEN}}"
+if [[ -z "${KNOWLEDGE_AUTH_TOKEN}" || "${KNOWLEDGE_API_TOKEN}" != "${KNOWLEDGE_AUTH_TOKEN}" ]]; then
+  echo "combined source-purge bearer is missing or inconsistent" >&2
+  exit 1
+fi
 
 # 日志落文件（持久化到 /data/knowledge/logs/，容器重启不丢）+ stdout（docker logs 可见）。
 # Panel 和 KS 各自一个文件，避免混在一起难排查。
@@ -123,7 +132,7 @@ UI_DIST_DIR=/app/panel/web/dist \
 METADATA_INSTANCES_CONFIG=/app/panel/config/metadata-instances.json \
 METADATA_REMOTE_TIMEOUT_MS="${METADATA_REMOTE_TIMEOUT_MS:-15000}" \
 KNOWLEDGE_SERVICE_URL="${KS_INTERNAL_URL}" \
-KNOWLEDGE_AUTH_TOKEN="${KNOWLEDGE_AUTH_TOKEN:-}" \
+KNOWLEDGE_AUTH_TOKEN="${KNOWLEDGE_AUTH_TOKEN}" \
 KNOWLEDGE_TIMEOUT_MS="${KNOWLEDGE_TIMEOUT_MS:-15000}" \
 KNOWLEDGE_LLM_BINDING_SYNC="${SYNC_ENV}" \
 KNOWLEDGE_LLM_PROXY_BASE_URL="${PROXY_BASE_URL}" \

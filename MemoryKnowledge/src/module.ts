@@ -12,6 +12,7 @@ import { mkdirSync, existsSync, rmSync } from "node:fs";
 import type { Db } from "./db/client.js";
 import { SqliteKnowledgeStore, type IKnowledgeStore } from "./store/index.js";
 import { WikiService, type WikiWorker } from "./store/index.js";
+import { WikiSourcePurgeService, type SourcePurgeWorker } from "./store/index.js";
 import { CodeGraphService, type CodeGraphWorker } from "./store/index.js";
 import { BuildQueue } from "./store/index.js";
 import {
@@ -41,6 +42,8 @@ export interface KnowledgeModuleConfig {
   wikiWorker?: WikiWorker;
   /** Optional: externally injected code worker (for testing). */
   codeWorker?: CodeGraphWorker;
+  /** Optional: externally injected clean source purge worker (for testing). */
+  sourcePurgeWorker?: SourcePurgeWorker;
 }
 
 export interface CodeGraphInstancePool {
@@ -52,6 +55,7 @@ export interface CodeGraphInstancePool {
 
 export interface KnowledgeModule {
   wikiService: WikiService;
+  wikiSourcePurgeService: WikiSourcePurgeService;
   cgService: CodeGraphService;
   wikiMgr: WikiSourceManager;
   store: IKnowledgeStore;
@@ -201,6 +205,45 @@ export function createKnowledgeModule(config: KnowledgeModuleConfig): KnowledgeM
     logger: { info: log.info.bind(log), warn: log.warn.bind(log), error: log.error.bind(log) },
     callbackConfig,
   });
+
+  const realSourcePurgeWorker: SourcePurgeWorker = async (ctx) => {
+    ctx.setInternalStatus("source-purge/force-ingest");
+    const managerStateDir = join(ctx.stagingDir, ".purge-engine-state");
+    const isolated = createWikiSourceManager(managerStateDir);
+    const isolatedName = `${ctx.wikiId}_${ctx.generationId}`;
+    const effectiveLlm = resolveLlm(ctx.serviceId);
+    try {
+      isolated.init({ name: isolatedName, path: ctx.stagingDir });
+      if (ctx.remainingManifest.length > 0) {
+        await isolated.ingest(isolatedName, {
+          protocol: effectiveLlm.protocol,
+          provider: effectiveLlm.provider,
+          apiKey: effectiveLlm.apiKey,
+          model: effectiveLlm.model,
+          customEndpoint: effectiveLlm.baseUrl,
+          maxContextSize: effectiveLlm.maxTokens,
+          timeoutMs: effectiveLlm.timeoutMs,
+        });
+      }
+      return { pageCount: isolated.getPages(isolatedName).length };
+    } finally {
+      try { isolated.remove(isolatedName); } catch { /* best effort */ }
+      rmSync(managerStateDir, { recursive: true, force: true });
+    }
+  };
+
+  const wikiSourcePurgeService = new WikiSourcePurgeService({
+    store,
+    wikiService,
+    dataRoot: dataDir,
+    worker: config.sourcePurgeWorker ?? realSourcePurgeWorker,
+    queue: sharedQueue,
+    logger: { info: log.info.bind(log), warn: log.warn.bind(log), error: log.error.bind(log) },
+    activateGeneration: (wikiId, generationDir) => {
+      const state = wikiMgr.activate({ name: wikiId, path: generationDir });
+      return { pageCount: state.pageCount ?? wikiMgr.getPages(wikiId).length };
+    },
+  });
   const cgService = new CodeGraphService({
     store,
     dataRoot: dataDir,
@@ -221,8 +264,31 @@ export function createKnowledgeModule(config: KnowledgeModuleConfig): KnowledgeM
   if (interrupted > 0) {
     log.info(`marked ${interrupted} interrupted tasks as failed`);
   }
+  const recoveredPurges = wikiSourcePurgeService.recover();
+  if (recoveredPurges > 0) log.info(`re-enqueued ${recoveredPurges} source purge operations`);
 
-  // Background restore of synced instances (non-blocking)
+  // Restore ready Wiki manager bindings synchronously before the HTTP server
+  // can answer. The generation pointer is the file authority; activate()
+  // replaces any stale persisted manager path so file/page/search views start
+  // on the same generation after a crash or process restart.
+  try {
+    const allSyncedWikis = store.listSyncedWikis();
+    for (const row of allSyncedWikis) {
+      const dir = wikiService.dirFor(row.service_id, row.team_id, row.wiki_id);
+      try {
+        const state = wikiMgr.activate({ name: row.wiki_id, path: dir });
+        const pageCount = state.pageCount ?? wikiMgr.getPages(row.wiki_id).length;
+        store.updateWikiStatus(row.service_id, row.wiki_id, { page_count: pageCount });
+        log.info(`[wiki] restored index ${row.wiki_id} (${pageCount} pages)`);
+      } catch (err) {
+        log.warn(`[wiki] failed to restore ${row.wiki_id}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  } catch (err) {
+    log.warn(`[wiki] restore scan failed: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // Background restore of code-graph instances (non-blocking).
   void (async () => {
     // Code-graph: lazy loading, just fix stats on startup
     try {
@@ -250,25 +316,6 @@ export function createKnowledgeModule(config: KnowledgeModuleConfig): KnowledgeM
     } catch (err) {
       log.warn(`[code-graph] restore scan failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-    // Wiki: register to engine manager
-    try {
-      const allSyncedWikis = store.listSyncedWikis();
-      for (const row of allSyncedWikis) {
-        const dir = join(dataDir, row.service_id, row.team_id, row.wiki_id);
-        try {
-          wikiMgr.init({ name: row.wiki_id, path: dir });
-          const pages = wikiMgr.getPages(row.wiki_id);
-          if (pages.length > 0) {
-            store.updateWikiStatus(row.service_id, row.wiki_id, { page_count: pages.length });
-          }
-          log.info(`[wiki] restored index ${row.wiki_id} (${pages.length} pages)`);
-        } catch (err) {
-          log.warn(`[wiki] failed to restore ${row.wiki_id}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    } catch (err) {
-      log.warn(`[wiki] restore scan failed: ${err instanceof Error ? err.message : String(err)}`);
-    }
   })();
 
   // ── AutoSync Scheduler: 定时拉取 git 仓库并更新 codegraph 索引 ──
@@ -278,5 +325,5 @@ export function createKnowledgeModule(config: KnowledgeModuleConfig): KnowledgeM
   });
   autoSyncScheduler.start();
 
-  return { wikiService, cgService, wikiMgr, store, instancePool, llmBindingStore, autoSyncScheduler, autoSyncConfig };
+  return { wikiService, wikiSourcePurgeService, cgService, wikiMgr, store, instancePool, llmBindingStore, autoSyncScheduler, autoSyncConfig };
 }

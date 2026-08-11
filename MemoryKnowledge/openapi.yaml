@@ -298,6 +298,40 @@ paths:
         default:
           $ref: '#/components/responses/ErrorResponse'
 
+  /wiki/source/purge-rebuild:
+    post:
+      tags: [LLM-Wiki]
+      summary: Purge one source by clean asynchronous generation rebuild
+      description: |
+        Writer-only control-plane operation. The caller supplies one exact
+        target source and the complete exact remaining raw manifest. The
+        operation is idempotent by operation_id plus request fingerprint,
+        rebuilds from remaining raw only, and returns a terminal validation
+        receipt on a later identical retry. A different fingerprint for the
+        same operation_id is rejected with 409.
+      operationId: purgeRebuildWikiSource
+      security:
+        - KnowledgeBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WikiSourcePurgeRebuildRequest'
+      responses:
+        '202':
+          description: Accepted; operation is pending
+        '200':
+          description: Existing operation state or terminal receipt
+        '400':
+          description: Invalid operation, manifest, or residue markers
+        '404':
+          description: Wiki not found for the service/team scope
+        '409':
+          description: Manifest CAS mismatch, operation-id conflict, or active writer
+        default:
+          $ref: '#/components/responses/ErrorResponse'
+
   /wiki/page/ls:
     post:
       tags: [LLM-Wiki]
@@ -712,6 +746,11 @@ paths:
           $ref: '#/components/responses/ErrorResponse'
 
 components:
+  securitySchemes:
+    KnowledgeBearer:
+      type: http
+      scheme: bearer
+      description: Internal KNOWLEDGE_API_TOKEN service credential.
   parameters:
     ServiceIdHeader:
       name: x-tdai-service-id
@@ -916,6 +955,47 @@ components:
               items:
                 type: string
               maxItems: 50
+
+    WikiSourceManifestEntry:
+      type: object
+      additionalProperties: false
+      required: [filename, sha256, size]
+      properties:
+        filename:
+          type: string
+        sha256:
+          type: string
+          pattern: '^[a-f0-9]{64}$'
+        size:
+          type: integer
+          minimum: 0
+
+    WikiSourcePurgeRebuildRequest:
+      allOf:
+        - $ref: '#/components/schemas/IdFields'
+        - type: object
+          required: [team_id, wiki_id, operation_id, target, remaining_manifest, residue_markers]
+          properties:
+            wiki_id:
+              type: string
+            operation_id:
+              type: string
+              pattern: '^[A-Za-z0-9_-]{16,128}$'
+            target:
+              $ref: '#/components/schemas/WikiSourceManifestEntry'
+            remaining_manifest:
+              type: array
+              maxItems: 2000
+              items:
+                $ref: '#/components/schemas/WikiSourceManifestEntry'
+            residue_markers:
+              type: array
+              minItems: 1
+              maxItems: 20
+              items:
+                type: string
+                minLength: 8
+                maxLength: 512
 
     WikiPageLsRequest:
       type: object

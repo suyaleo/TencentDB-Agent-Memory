@@ -76,5 +76,20 @@ export type {
   WriteOutcome,
 } from "./wiki-service.js";
 
+export { WikiSourcePurgeService, scanRawManifest } from "./wiki-source-purge-service.js";
+export type {
+  SourceManifestEntry,
+  SourcePurgeRequest,
+  SourcePurgeBuildContext,
+  SourcePurgeBuildResult,
+  SourcePurgeWorker,
+  SourcePurgeActivator,
+  SourcePurgeRetirer,
+  SourcePurgeReceipt,
+  SourcePurgeSubmitResult,
+  PublicSourcePurgeOperation,
+  WikiSourcePurgeServiceOptions,
+} from "./wiki-source-purge-service.js";
+
 export { AutoSyncScheduler, resolveAutoSyncConfig } from "./auto-sync-scheduler.js";
 export type { AutoSyncConfig, AutoSyncSchedulerDeps } from "./auto-sync-scheduler.js";

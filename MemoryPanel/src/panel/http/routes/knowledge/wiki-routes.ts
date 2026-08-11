@@ -14,8 +14,9 @@ import type { Hono } from 'hono';
 import { validatePanelMetaHeaders } from '../../middleware/validate-panel-headers.js';
 import { respondControlError } from '../../envelope.js';
 import type { PanelDeps } from '../../../panel-deps.js';
-import type { WikiRawWriteFile } from '../../../kernel/ports/knowledge-client-port.js';
+import type { WikiRawWriteFile, WikiSourceManifestEntry } from '../../../kernel/ports/knowledge-client-port.js';
 import { respondEnvelope } from '../../envelope.js';
+import { toKernelCredentials } from '../../../kernel/types.js';
 import {
   buildCtx,
   readJson,
@@ -243,6 +244,105 @@ export function registerKnowledgeWikiRoutes(api: Hono, deps: PanelDeps): void {
     return runKs(c, () => kc.wikiRawRm(teamId, wikiId, filenames, gate.userId));
   });
 
+  // Destructive source purge — authenticated writer only, exact team ownership,
+  // and an operation-id + complete manifest CAS passed unchanged to KS.
+  api.post('/knowledge/wiki/source/purge-rebuild', mw, async (c) => {
+    const ctx = buildCtx(c);
+    const body = await readJson(c);
+    const teamId = str(body, 'team_id');
+    const wikiId = str(body, 'wiki_id');
+    const operationId = str(body, 'operation_id');
+    if (!teamId) return respondControlError(c, 400, 'MISSING_TEAM_ID');
+    if (!wikiId) return respondControlError(c, 400, 'MISSING_WIKI_ID');
+    if (!operationId) return respondControlError(c, 400, 'MISSING_OPERATION_ID');
+    const target = parseSourceManifestEntry(body.target);
+    const remaining = Array.isArray(body.remaining_manifest)
+      ? body.remaining_manifest.map(parseSourceManifestEntry)
+      : [];
+    if (
+      !Array.isArray(body.residue_markers) ||
+      body.residue_markers.some((marker) => typeof marker !== 'string')
+    ) {
+      return respondControlError(c, 400, 'INVALID_RESIDUE_MARKERS');
+    }
+    const residueMarkers = body.residue_markers as string[];
+    if (!target || remaining.some((entry) => entry === null)) {
+      return respondControlError(c, 400, 'INVALID_SOURCE_MANIFEST');
+    }
+    if (residueMarkers.length === 0) return respondControlError(c, 400, 'MISSING_RESIDUE_MARKERS');
+
+    const gate = await requireKnowledgeRead(deps, c, ctx, wikiId, { action: 'write' });
+    if ('error' in gate) return gate.error;
+    if (gate.asset?.team_id !== teamId) return respondControlError(c, 400, 'TEAM_MISMATCH');
+    const kc = deps.knowledgeClientFactory(ctx.instanceId);
+    return runKs(c, async () => {
+      const operation = await kc.wikiSourcePurgeRebuild({
+        operation_id: operationId,
+        team_id: teamId,
+        wiki_id: wikiId,
+        target,
+        remaining_manifest: remaining as WikiSourceManifestEntry[],
+        residue_markers: residueMarkers,
+      }, gate.userId);
+      // A terminal receipt is not exposed until the kernel-side knowledge
+      // entity has also dropped the pre-purge summary. Use the authoritative
+      // partial-update endpoint, then independently read the entity back. If
+      // either response is lost, the same operation retry repeats only this
+      // idempotent metadata clear.
+      if (operation.status === 'succeeded') {
+        if (!operation.receipt) throw new Error('terminal source purge receipt missing');
+        const detail = await kc.wikiGet(wikiId);
+        const cred = toKernelCredentials(
+          ctx,
+          { timeoutMs: deps.config.metadataRemoteTimeoutMs },
+          { omitUserKey: true },
+        );
+        const updated = await deps.kernelHttp.postEnvelope<{
+          knowledge_id: string;
+          type: string;
+          summary: string | null;
+          team_id: string;
+        }>('/v3/knowledge/update', {
+          knowledge_id: detail.wiki_id,
+          team_id: detail.team_id,
+          summary: null,
+        }, cred);
+        if (
+          updated.code !== 0 ||
+          updated.data?.knowledge_id !== detail.wiki_id ||
+          updated.data?.type !== 'wiki' ||
+          updated.data?.team_id !== detail.team_id ||
+          updated.data?.summary !== null
+        ) {
+          throw new Error('kernel knowledge summary clear update failed');
+        }
+        const readback = await deps.kernelHttp.postEnvelope<{
+          knowledge_id: string;
+          type: string;
+          summary: string | null;
+          team_id: string;
+        }>('/v3/knowledge/get', {
+          knowledge_id: detail.wiki_id,
+          team_id: detail.team_id,
+        }, cred);
+        if (
+          readback.code !== 0 ||
+          readback.data?.knowledge_id !== detail.wiki_id ||
+          readback.data?.type !== 'wiki' ||
+          readback.data?.team_id !== detail.team_id ||
+          readback.data?.summary !== null
+        ) {
+          throw new Error('kernel knowledge summary clear readback failed');
+        }
+        return {
+          ...operation,
+          receipt: { ...operation.receipt, panel_summary_cleared: true },
+        };
+      }
+      return operation;
+    });
+  });
+
   // W9 raw/write — asset write ACL + 精确 team 归属 + 上传大小限制
   const MAX_FILE_SIZE = 512 * 1024;        // 单文件 512KB
   const MAX_FILES_PER_REQUEST = 10;        // 单次最多 10 个文件
@@ -277,4 +377,15 @@ export function registerKnowledgeWikiRoutes(api: Hono, deps: PanelDeps): void {
     const kc = deps.knowledgeClientFactory(ctx.instanceId);
     return runKs(c, () => kc.wikiRawWrite(teamId, wikiId, files, gate.userId));
   });
+}
+
+function parseSourceManifestEntry(value: unknown): WikiSourceManifestEntry | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const entry = value as Record<string, unknown>;
+  if (
+    typeof entry.filename !== 'string' ||
+    typeof entry.sha256 !== 'string' ||
+    typeof entry.size !== 'number'
+  ) return null;
+  return { filename: entry.filename, sha256: entry.sha256, size: entry.size };
 }

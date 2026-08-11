@@ -55,6 +55,8 @@ export interface ServiceConfig {
   publicBaseUrl: string;
   /** TMC callback URL for status notifications (empty = no callback). */
   tmcCallbackUrl: string;
+  /** Internal service bearer required by destructive source purge/rebuild. */
+  apiToken: string;
 }
 
 function env(key: string, fallback: string): string {
@@ -81,6 +83,7 @@ export function loadConfig(): ServiceConfig {
     apiPrefix: env("API_PREFIX", "/v3"),
     publicBaseUrl: env("KNOWLEDGE_PUBLIC_BASE_URL", ""),
     tmcCallbackUrl: env("TMC_CALLBACK_URL", ""),
+    apiToken: env("KNOWLEDGE_API_TOKEN", ""),
     llm: {
       mode: env("LLM_MODE", "proxy") === "custom" ? "custom" : "proxy",
       protocol: env("LLM_PROTOCOL", "openai") === "anthropic" ? "anthropic" : "openai",

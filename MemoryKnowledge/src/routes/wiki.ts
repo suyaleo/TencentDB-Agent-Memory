@@ -1,9 +1,10 @@
 /**
- * Wiki Routes — 15 endpoints (Hono rewrite).
+ * Wiki Routes — 16 normal endpoints plus one destructive source-rebuild endpoint.
  *
  * Asset (5): create / get / list / delete / ingest
  * File (8): raw/{ls,read,write,rm} + page/{ls,read,write,rm}
  * Derived (2): graph / search
+ * Destructive (1): source/purge-rebuild (internal bearer + exact manifest CAS)
  *
  * All POST, unified ApiResponseEnvelope.
  * Routes are defined WITHOUT /v2 prefix — the prefix is applied once at server.ts mount level.
@@ -15,8 +16,9 @@
  */
 
 import { Hono } from "hono";
+import { timingSafeEqual } from "node:crypto";
 
-import type { WikiService } from "../store/index.js";
+import type { SourceManifestEntry, WikiService, WikiSourcePurgeService } from "../store/index.js";
 import type { WikiSourceManager } from "../engines/wiki/index.js";
 import type { WikiStatus } from "../store/index.js";
 import {
@@ -30,15 +32,19 @@ import {
 
 export interface WikiRouteDeps {
   wikiService: WikiService;
+  wikiSourcePurgeService: WikiSourcePurgeService;
   wikiMgr: WikiSourceManager;
   /** Public base URL for service_url; should already include the API prefix (e.g. http://host:8421/v3). */
   publicBaseUrl: string;
+  /** Internal service bearer; purge/rebuild fails closed when unset. */
+  sourcePurgeAuthToken: string;
 }
 
 /** Handle WriteOutcome error codes → HTTP response. Returns Response if handled, null otherwise. */
 function maybeWriteError(outcome: unknown): Response | null {
   if (outcome === null) return Response.json(wrapError(404, "wiki not found"), { status: 404 });
   if (outcome === "processing") return Response.json(wrapError(409, "wiki is processing; cannot write/delete"), { status: 409 });
+  if (outcome === "operation_active") return Response.json(wrapError(409, "source purge/rebuild operation is active"), { status: 409 });
   if (outcome === "invalid_path") return Response.json(wrapError(400, "invalid path: traversal detected"), { status: 400 });
   if (outcome === "forbidden_path") return Response.json(wrapError(400, "forbidden path (structural file or outside wiki/)"), { status: 400 });
   if (outcome === "too_large") return Response.json(wrapError(413, "content exceeds size limit"), { status: 413 });
@@ -47,7 +53,7 @@ function maybeWriteError(outcome: unknown): Response | null {
 
 export function createWikiRoutes(deps: WikiRouteDeps): Hono {
   const app = new Hono();
-  const { wikiService, wikiMgr, publicBaseUrl } = deps;
+  const { wikiService, wikiSourcePurgeService, wikiMgr, publicBaseUrl, sourcePurgeAuthToken } = deps;
 
   // ═══════════════════ Asset Layer ═══════════════════
 
@@ -84,6 +90,7 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const result = wikiService.ingest(serviceId, row.team_id, wikiId, requesterUserId);
     if (result.kind === "not_found") return c.json(wrapError(404, "wiki not found"), 404);
+    if (result.kind === "operation_active") return c.json(wrapError(409, "source purge/rebuild operation is active"), 409);
     if (result.kind === "busy") {
       // 并发拒绝：干净最小的 409 响应体（调用方用 code 判断，不 parse message）。
       return c.json({ code: 409, message: "busy", data: { status: result.status, step: result.step } }, 409);
@@ -112,6 +119,10 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
       const row = wikiService.getById(serviceId, id);
       if (!row) {
         result.failed.push({ id, reason: "not found" });
+        continue;
+      }
+      if (wikiService.isWriteFenced(serviceId, row.team_id, id)) {
+        result.failed.push({ id, reason: "source purge/rebuild operation is active" });
         continue;
       }
       const ok = wikiService.delete(serviceId, row.team_id, id);
@@ -143,9 +154,72 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
       return c.json(wrapError(400, "at least one of name/summary must be provided"), 400);
     }
 
+    const row = wikiService.getById(serviceId, wikiId);
+    if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+    if (wikiService.isWriteFenced(serviceId, row.team_id, wikiId)) {
+      return c.json(wrapError(409, "source purge/rebuild operation is active"), 409);
+    }
     const updated = wikiService.updateMeta(serviceId, wikiId, patch);
     if (!updated) return c.json(wrapError(404, "wiki not found"), 404);
     return c.json(wrapOk(toWikiDetail(updated)));
+  });
+
+  /**
+   * Destructive source removal is intentionally separate from raw/rm.  The
+   * caller supplies an exact target plus complete remaining manifest; retries
+   * with the same operation id and fingerprint return the same operation.
+   */
+  app.post("/source/purge-rebuild", async (c) => {
+    if (!sourcePurgeAuthToken) {
+      return c.json(wrapError(503, "source purge/rebuild authentication is not configured"), 503);
+    }
+    if (!validBearer(c.req.header("authorization"), sourcePurgeAuthToken)) {
+      return c.json(wrapError(401, "invalid source purge/rebuild bearer"), 401);
+    }
+    const body = await c.req.json<Record<string, unknown>>();
+    const ids = extractIdFields(c.req.header("x-tdai-service-id"), body);
+    if (!ids) return c.json(wrapError(400, "x-tdai-service-id header and team_id are required"), 400);
+    const wikiId = body.wiki_id;
+    const operationId = body.operation_id;
+    if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
+    if (typeof operationId !== "string") return c.json(wrapError(400, "operation_id is required"), 400);
+
+    const target = parseManifestEntry(body.target);
+    const remaining = Array.isArray(body.remaining_manifest)
+      ? body.remaining_manifest.map(parseManifestEntry)
+      : [];
+    if (
+      !Array.isArray(body.residue_markers) ||
+      body.residue_markers.some((marker) => typeof marker !== "string")
+    ) {
+      return c.json(wrapError(400, "residue_markers must be an array of strings"), 400);
+    }
+    const markers = body.residue_markers as string[];
+    if (!target || remaining.some((entry) => entry === null)) {
+      return c.json(wrapError(400, "target and remaining_manifest entries require filename, sha256 and size"), 400);
+    }
+
+    const result = wikiSourcePurgeService.submit({
+      operation_id: operationId,
+      service_id: ids.service_id,
+      team_id: ids.team_id,
+      wiki_id: wikiId,
+      target,
+      remaining_manifest: remaining as SourceManifestEntry[],
+      residue_markers: markers,
+      requester_user_id: ids.user_id,
+    });
+    if (result.kind === "not_found") return c.json(wrapError(404, "wiki not found"), 404);
+    if (result.kind === "invalid") return c.json(wrapError(400, result.message), 400);
+    if (result.kind === "manifest_mismatch") {
+      return c.json({ code: 409, message: "manifest_mismatch", data: { actual_manifest_sha256: result.actual_manifest_sha256 } }, 409);
+    }
+    if (result.kind === "operation_conflict") return c.json(wrapError(409, "operation_id fingerprint conflict"), 409);
+    if (result.kind === "busy") {
+      return c.json({ code: 409, message: "busy", data: { operation_id: result.operation_id ?? null } }, 409);
+    }
+    const status = result.kind === "accepted" ? 202 : 200;
+    return c.json(wrapOk(result.operation), status);
   });
 
   // ── WITH-IdFields (service_id + team_id) ──
@@ -208,6 +282,9 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+    if (wikiService.isWriteFenced(serviceId, row.team_id, wikiId)) {
+      return c.json(wrapError(409, "source purge/rebuild operation is committing"), 409);
+    }
 
     const items = wikiService.rawLs(serviceId, row.team_id, wikiId);
     if (items === null) return c.json(wrapError(404, "wiki not found"), 404);
@@ -231,6 +308,9 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+    if (wikiService.isWriteFenced(serviceId, row.team_id, wikiId)) {
+      return c.json(wrapError(409, "source purge/rebuild operation is committing"), 409);
+    }
 
     try {
       const result = wikiService.rawReadMany(serviceId, row.team_id, wikiId, filenames);
@@ -340,6 +420,9 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+    if (wikiService.isWriteFenced(serviceId, row.team_id, wikiId)) {
+      return c.json(wrapError(409, "source purge/rebuild operation is committing"), 409);
+    }
 
     const items = wikiService.pageLs(serviceId, row.team_id, wikiId);
     if (items === null) return c.json(wrapError(404, "wiki not found"), 404);
@@ -363,6 +446,9 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+    if (wikiService.isWriteFenced(serviceId, row.team_id, wikiId)) {
+      return c.json(wrapError(409, "source purge/rebuild operation is committing"), 409);
+    }
 
     try {
       const result = wikiService.pageReadMany(serviceId, row.team_id, wikiId, refs);
@@ -454,6 +540,9 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+    if (wikiService.isWriteFenced(serviceId, row.team_id, wikiId)) {
+      return c.json(wrapError(409, "source purge/rebuild operation is committing"), 409);
+    }
 
     if (row.status !== "ready") {
       return c.json(wrapOk({ nodes: [], edges: [], communities: [] }));
@@ -474,6 +563,9 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
 
     const row = wikiService.getById(serviceId, wikiId);
     if (!row) return c.json(wrapError(404, "wiki not found"), 404);
+    if (wikiService.isWriteFenced(serviceId, row.team_id, wikiId)) {
+      return c.json(wrapError(409, "source purge/rebuild operation is committing"), 409);
+    }
 
     if (row.status !== "ready") {
       return c.json(wrapOk({ results: [], links: [], count: 0 }));
@@ -511,4 +603,22 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
   });
 
   return app;
+}
+
+function parseManifestEntry(value: unknown): SourceManifestEntry | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const entry = value as Record<string, unknown>;
+  if (
+    typeof entry.filename !== "string" ||
+    typeof entry.sha256 !== "string" ||
+    typeof entry.size !== "number"
+  ) return null;
+  return { filename: entry.filename, sha256: entry.sha256, size: entry.size };
+}
+
+function validBearer(header: string | undefined, expected: string): boolean {
+  if (!header?.startsWith("Bearer ")) return false;
+  const supplied = Buffer.from(header.slice("Bearer ".length), "utf-8");
+  const wanted = Buffer.from(expected, "utf-8");
+  return supplied.length === wanted.length && timingSafeEqual(supplied, wanted);
 }

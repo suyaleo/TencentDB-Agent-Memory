@@ -22,6 +22,8 @@ import type {
   WikiRawWriteFile,
   WikiRawWriteItem,
   WikiRawRmResult,
+  WikiSourcePurgeRequest,
+  WikiSourcePurgeOperation,
   WikiPageReadItem,
   WikiPageWriteItem,
   WikiPageWriteResultItem,
@@ -118,6 +120,10 @@ export class HttpKnowledgeClient implements KnowledgeClientPort {
 
   async wikiRawRm(teamId: string, wikiId: string, filenames: string[], userId?: string): Promise<WikiRawRmResult> {
     return this.post('/v3/wiki/raw/rm', { team_id: teamId, user_id: userId, wiki_id: wikiId, filenames });
+  }
+
+  async wikiSourcePurgeRebuild(request: WikiSourcePurgeRequest, userId?: string): Promise<WikiSourcePurgeOperation> {
+    return this.post('/v3/wiki/source/purge-rebuild', { ...request, user_id: userId });
   }
 
   // ═══════════════ Wiki · page 文件层 ═══════════════
