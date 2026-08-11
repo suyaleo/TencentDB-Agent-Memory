@@ -1368,9 +1368,15 @@ export class MetadataService {
     });
     if (fast.allowed) return fast;
 
-    // 只有「通过了前置门但角色默认未覆盖」(no_permission) 才需懒加载 ACL 重判
-    if (fast.reason !== "no_permission") return fast;
-    if (membership && roleDefaultCovers(membership.role, action)) return fast;
+    // restricted 对非 admin 在空 ACL 快速判定中会返回 visibility_restricted，
+    // 这个结果仅表示「尚未查 ACL」，不能当作终态 deny。private 仍是严格 owner-only，
+    // 不会进入这个懒加载分支。
+    const restrictedNeedsAcl =
+      asset.visibility === "restricted" && fast.reason === "visibility_restricted";
+    const roleFallbackNeedsAcl =
+      fast.reason === "no_permission" &&
+      !(membership && roleDefaultCovers(membership.role, action));
+    if (!restrictedNeedsAcl && !roleFallbackNeedsAcl) return fast;
 
     const aclRecords = await this.allAclRecords(params.asset_id);
     return checkPermission({

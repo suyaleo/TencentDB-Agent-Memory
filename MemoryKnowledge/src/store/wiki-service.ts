@@ -42,6 +42,11 @@ import {
   sha256,
   type SourceStatus,
 } from "../engines/wiki/index-db.js";
+import {
+  hasActiveSourcePurge,
+  resolveActiveWikiDir,
+  wikiStorageRoot,
+} from "./wiki-generation.js";
 
 export interface WikiBuildContext {
   wikiId: string;
@@ -67,6 +72,7 @@ export type WikiWorker = (ctx: WikiBuildContext) => Promise<WikiBuildResult | vo
 export type IngestResult =
   | { kind: "ok"; row: WikiRow }
   | { kind: "not_found" }
+  | { kind: "operation_active" }
   | { kind: "busy"; status: "pending" | "processing"; step: string | null };
 
 export interface WikiServiceLogger {
@@ -178,6 +184,7 @@ export type WriteOutcome<T> =
   | T
   | null
   | "processing"
+  | "operation_active"
   | "invalid_path"
   | "forbidden_path"
   | "too_large";
@@ -217,6 +224,8 @@ export class WikiService {
    * Node 单线程，读写无并发）。清理收尾后移除。
    */
   private readonly cancelled = new Set<string>();
+  /** Async raw/page mutations that have passed the persistent purge fence. */
+  private readonly activeMutations = new Set<string>();
 
   constructor(opts: WikiServiceOptions) {
     this.store = opts.store;
@@ -227,8 +236,20 @@ export class WikiService {
     this.callbackConfig = opts.callbackConfig;
   }
 
+  storageRootFor(serviceId: string, teamId: string, wikiId: string): string {
+    return wikiStorageRoot(this.dataRoot, serviceId, teamId, wikiId);
+  }
+
   dirFor(serviceId: string, teamId: string, wikiId: string): string {
-    return join(this.dataRoot, serviceId, teamId, wikiId);
+    return resolveActiveWikiDir(this.storageRootFor(serviceId, teamId, wikiId));
+  }
+
+  isWriteFenced(serviceId: string, teamId: string, wikiId: string): boolean {
+    return hasActiveSourcePurge(this.storageRootFor(serviceId, teamId, wikiId));
+  }
+
+  hasInFlightMutation(serviceId: string, teamId: string, wikiId: string): boolean {
+    return this.activeMutations.has(this.mutationKey(serviceId, teamId, wikiId));
   }
 
   /**
@@ -269,6 +290,7 @@ export class WikiService {
   ingest(serviceId: string, teamId: string, wikiId: string, requesterUserId?: string): IngestResult {
     const row = this.store.getWiki(serviceId, teamId, wikiId);
     if (!row) return { kind: "not_found" };
+    if (this.isWriteFenced(serviceId, teamId, wikiId)) return { kind: "operation_active" };
     // 并发拒绝：正在排队/执行中直接拒绝，不覆盖状态、不重复入队、不写 audit。
     if (row.status === "pending" || row.status === "processing") {
       return { kind: "busy", status: row.status, step: row.internal_status };
@@ -350,7 +372,7 @@ export class WikiService {
       this.logger?.warn?.(`[wiki] hard-delete row failed ${wikiId}: ${String(err)}`);
     }
     try {
-      rmSync(this.dirFor(serviceId, teamId, wikiId), { recursive: true, force: true });
+      rmSync(this.storageRootFor(serviceId, teamId, wikiId), { recursive: true, force: true });
     } catch (err) {
       this.logger?.warn?.(`[wiki] rm dir failed ${wikiId}: ${String(err)}`);
     }
@@ -489,6 +511,7 @@ export class WikiService {
   ): WriteOutcome<RawWriteResult> {
     const row = this.store.getWiki(serviceId, teamId, wikiId);
     if (!row) return null;
+    if (this.isWriteFenced(serviceId, teamId, wikiId)) return "operation_active";
     if (row.status === "processing") return "processing";
 
     const size = Buffer.byteLength(content, "utf-8");
@@ -520,6 +543,7 @@ export class WikiService {
   ): WriteOutcome<RawWriteManyItem[]> {
     const row = this.store.getWiki(serviceId, teamId, wikiId);
     if (!row) return null;
+    if (this.isWriteFenced(serviceId, teamId, wikiId)) return "operation_active";
     if (row.status === "processing") return "processing";
     if (files.length > RAW_WRITE_MAX) {
       throw new Error(`files exceeds max ${RAW_WRITE_MAX}`);
@@ -599,43 +623,51 @@ export class WikiService {
   ): Promise<WriteOutcome<RawRmResult>> {
     const row = this.store.getWiki(serviceId, teamId, wikiId);
     if (!row) return null;
+    if (this.isWriteFenced(serviceId, teamId, wikiId)) return "operation_active";
     if (row.status === "processing") return "processing";
     if (filenames.length > RAW_RM_MAX) {
       throw new Error(`filenames exceeds max ${RAW_RM_MAX}`);
     }
 
-    const projectPath = this.dirFor(serviceId, teamId, wikiId);
-    const sourcesDir = join(projectPath, "raw", "sources");
-    const fullPaths: string[] = [];
-    for (const fn of filenames) {
-      const safe = this.resolveRawPath(sourcesDir, fn);
-      if (!safe) return "invalid_path";
-      fullPaths.push(safe);
-    }
-
-    // 自研级联删除：删 raw 源并清理引用它的 page（frontmatter sources 驱动）。
-    const { deleteSourceFiles } = await import(
-      "../engines/wiki/ingest-v2/cascade.js"
-    );
-    const result = await deleteSourceFiles(projectPath, fullPaths, {
-      logReason: "wiki/raw/rm",
-    });
-
-    // 删除对应 source 行（与文件级联删除对应，设计 003 §5）。
+    const mutationKey = this.mutationKey(serviceId, teamId, wikiId);
+    if (this.activeMutations.has(mutationKey)) return "operation_active";
+    this.activeMutations.add(mutationKey);
     try {
-      initIndexDb(projectPath);
-      withWriteDb(projectPath, (db) => deleteSources(db, filenames));
-    } catch (err) {
-      this.logger?.warn?.(`[wiki] source rows delete failed: ${String(err)}`);
-    }
+      const projectPath = this.dirFor(serviceId, teamId, wikiId);
+      const sourcesDir = join(projectPath, "raw", "sources");
+      const fullPaths: string[] = [];
+      for (const fn of filenames) {
+        const safe = this.resolveRawPath(sourcesDir, fn);
+        if (!safe) return "invalid_path";
+        fullPaths.push(safe);
+      }
 
-    return {
-      deleted_files: filenames,
-      deleted_pages: result.deletedWikiPaths.map((p: string) =>
-        this.absToPageRef(projectPath, p),
-      ),
-      rewritten_pages: result.rewrittenSourcePages,
-    };
+      // 自研级联删除：删 raw 源并清理引用它的 page（frontmatter sources 驱动）。
+      const { deleteSourceFiles } = await import(
+        "../engines/wiki/ingest-v2/cascade.js"
+      );
+      const result = await deleteSourceFiles(projectPath, fullPaths, {
+        logReason: "wiki/raw/rm",
+      });
+
+      // 删除对应 source 行（与文件级联删除对应，设计 003 §5）。
+      try {
+        initIndexDb(projectPath);
+        withWriteDb(projectPath, (db) => deleteSources(db, filenames));
+      } catch (err) {
+        this.logger?.warn?.(`[wiki] source rows delete failed: ${String(err)}`);
+      }
+
+      return {
+        deleted_files: filenames,
+        deleted_pages: result.deletedWikiPaths.map((p: string) =>
+          this.absToPageRef(projectPath, p),
+        ),
+        rewritten_pages: result.rewrittenSourcePages,
+      };
+    } finally {
+      this.activeMutations.delete(mutationKey);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -732,6 +764,7 @@ export class WikiService {
   ): WriteOutcome<PageWriteResult> {
     const row = this.store.getWiki(serviceId, teamId, wikiId);
     if (!row) return null;
+    if (this.isWriteFenced(serviceId, teamId, wikiId)) return "operation_active";
     if (row.status === "processing") return "processing";
 
     const size = Buffer.byteLength(content, "utf-8");
@@ -764,6 +797,7 @@ export class WikiService {
   ): WriteOutcome<PageWriteManyItem[]> {
     const row = this.store.getWiki(serviceId, teamId, wikiId);
     if (!row) return null;
+    if (this.isWriteFenced(serviceId, teamId, wikiId)) return "operation_active";
     if (row.status === "processing") return "processing";
     if (pages.length > PAGE_WRITE_MAX) {
       throw new Error(`pages exceeds max ${PAGE_WRITE_MAX}`);
@@ -836,31 +870,39 @@ export class WikiService {
   ): Promise<WriteOutcome<PageRmResult>> {
     const row = this.store.getWiki(serviceId, teamId, wikiId);
     if (!row) return null;
+    if (this.isWriteFenced(serviceId, teamId, wikiId)) return "operation_active";
     if (row.status === "processing") return "processing";
     if (refs.length > PAGE_RM_MAX) {
       throw new Error(`refs exceeds max ${PAGE_RM_MAX}`);
     }
 
-    const projectPath = this.dirFor(serviceId, teamId, wikiId);
-    const fullPaths: string[] = [];
-    for (const r of refs) {
-      if (this.isForbiddenPageRef(r)) return "forbidden_path";
-      const safe = this.resolvePageRef(projectPath, r);
-      if (!safe) return "invalid_path";
-      fullPaths.push(safe);
+    const mutationKey = this.mutationKey(serviceId, teamId, wikiId);
+    if (this.activeMutations.has(mutationKey)) return "operation_active";
+    this.activeMutations.add(mutationKey);
+    try {
+      const projectPath = this.dirFor(serviceId, teamId, wikiId);
+      const fullPaths: string[] = [];
+      for (const r of refs) {
+        if (this.isForbiddenPageRef(r)) return "forbidden_path";
+        const safe = this.resolvePageRef(projectPath, r);
+        if (!safe) return "invalid_path";
+        fullPaths.push(safe);
+      }
+
+      const { cascadeDeleteWikiPagesWithRefs } = await import(
+        "../engines/wiki/ingest-v2/cascade.js"
+      );
+      const result = await cascadeDeleteWikiPagesWithRefs(projectPath, fullPaths);
+
+      return {
+        deleted_pages: result.deletedPaths.map((p: string) =>
+          this.absToPageRef(projectPath, p),
+        ),
+        rewritten_files: result.rewrittenFiles,
+      };
+    } finally {
+      this.activeMutations.delete(mutationKey);
     }
-
-    const { cascadeDeleteWikiPagesWithRefs } = await import(
-      "../engines/wiki/ingest-v2/cascade.js"
-    );
-    const result = await cascadeDeleteWikiPagesWithRefs(projectPath, fullPaths);
-
-    return {
-      deleted_pages: result.deletedPaths.map((p: string) =>
-        this.absToPageRef(projectPath, p),
-      ),
-      rewritten_files: result.rewrittenFiles,
-    };
   }
 
   // ═══════════════════════════════════════════════════════════════════
@@ -960,6 +1002,10 @@ export class WikiService {
   private isForbiddenPageRef(ref: string): boolean {
     const cleanRef = ref.replace(/^wiki\//, "").replace(/\.md$/, "");
     return PAGE_FORBIDDEN_REFS.has(cleanRef) || PAGE_FORBIDDEN_REFS.has(`wiki/${cleanRef}`);
+  }
+
+  private mutationKey(serviceId: string, teamId: string, wikiId: string): string {
+    return `${serviceId}\u0000${teamId}\u0000${wikiId}`;
   }
 
   private scanPagesRecursive(

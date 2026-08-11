@@ -114,6 +114,8 @@ export interface WikiSourceManager {
   readPage(name: string, relPath: string): string | null;
   getPages(name: string): WikiPage[];
   init(config: WikiSourceConfig): WikiSourceState;
+  /** Atomically replace one registered wiki's on-disk generation. */
+  activate(config: WikiSourceConfig): WikiSourceState;
   ingest(name: string, llmConfig: any): Promise<any[]>;
 }
 
@@ -786,6 +788,41 @@ export function createWikiSourceManager(dataDir: string): WikiSourceManager {
     return register(config);
   }
 
+  /**
+   * Prepare the replacement read model before publishing it in the manager.
+   * The source-purge operation keeps every external read fenced while this
+   * synchronous swap runs. If preparation or persistence fails, restore the
+   * prior registration so recovery can retry without an empty manager slot.
+   */
+  function activate(config: WikiSourceConfig): WikiSourceState {
+    const previous = sources.get(config.name);
+    const candidate: WikiSourceState = {
+      name: config.name,
+      path: config.path,
+      status: "scanning",
+    };
+
+    initWikiProject(config.path);
+    sources.set(config.name, candidate);
+    try {
+      const pages = scanWikiDir(config.path);
+      rebuildIndex(config.name, pages);
+      candidate.status = "ready";
+      candidate.pageCount = pages.length;
+      candidate.lastSyncAt = new Date().toISOString();
+      candidate.error = undefined;
+      persist();
+      return candidate;
+    } catch (err) {
+      if (previous) sources.set(config.name, previous);
+      else sources.delete(config.name);
+      // rebuildIndex may have evicted the old read handle. The restored state
+      // lazily reopens its own index on the next read.
+      try { persist(); } catch { /* recovery also reconstructs from metadata */ }
+      throw err;
+    }
+  }
+
   async function ingest(name: string, llmConfig: any): Promise<any[]> {
     const state = sources.get(name);
     if (!state) throw new Error(`Not found: ${name}`);
@@ -849,7 +886,7 @@ export function createWikiSourceManager(dataDir: string): WikiSourceManager {
   }
 
   return {
-    register, sync, init, ingest,
+    register, sync, init, activate, ingest,
     get: (name) => sources.get(name),
     list: () => [...sources.values()],
     remove: (name) => {

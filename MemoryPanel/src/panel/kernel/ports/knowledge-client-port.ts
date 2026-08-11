@@ -78,6 +78,30 @@ export interface WikiRawRmResult {
   rewritten_pages: number;
 }
 
+export interface WikiSourceManifestEntry {
+  filename: string;
+  sha256: string;
+  size: number;
+}
+
+export interface WikiSourcePurgeRequest {
+  operation_id: string;
+  team_id: string;
+  wiki_id: string;
+  target: WikiSourceManifestEntry;
+  remaining_manifest: WikiSourceManifestEntry[];
+  residue_markers: string[];
+}
+
+export interface WikiSourcePurgeOperation {
+  operation_id: string;
+  operation_fingerprint: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  phase: string;
+  receipt: Record<string, unknown> | null;
+  error: string | null;
+}
+
 export interface WikiPageReadItem {
   ref: string;
   content?: string;
@@ -167,6 +191,7 @@ export interface KnowledgeClientPort {
   wikiRawRead(wikiId: string, filenames: string[]): Promise<{ items: WikiRawReadItem[] }>;
   wikiRawWrite(teamId: string, wikiId: string, files: WikiRawWriteFile[], userId?: string): Promise<{ items: WikiRawWriteItem[] }>;
   wikiRawRm(teamId: string, wikiId: string, filenames: string[], userId?: string): Promise<WikiRawRmResult>;
+  wikiSourcePurgeRebuild(request: WikiSourcePurgeRequest, userId?: string): Promise<WikiSourcePurgeOperation>;
 
   // Wiki — page 文件层（ls/read 仅资产 id；write/rm 带 IdFields）
   wikiPageLs(wikiId: string): Promise<{ items: PageEntry[] }>;

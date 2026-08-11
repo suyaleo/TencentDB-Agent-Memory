@@ -143,7 +143,7 @@ export interface WikiMetaPatch {
 
 // ───────────────────────── Audit ─────────────────────────
 
-export type AuditAction = "ingest" | "ready" | "failed" | "delete" | "create";
+export type AuditAction = "ingest" | "ready" | "failed" | "delete" | "create" | "source_purge_rebuild";
 
 export interface AuditLogInput {
   service_id?: string | null;

@@ -58,8 +58,10 @@ export function createApp() {
   const api = new Hono();
   api.route("/wiki", createWikiRoutes({
     wikiService: knowledgeModule.wikiService,
+    wikiSourcePurgeService: knowledgeModule.wikiSourcePurgeService,
     wikiMgr: knowledgeModule.wikiMgr,
     publicBaseUrl: config.publicBaseUrl,
+    sourcePurgeAuthToken: config.apiToken,
   }));
   api.route("/code-graph", createCodeGraphRoutes({
     cgService: knowledgeModule.cgService,

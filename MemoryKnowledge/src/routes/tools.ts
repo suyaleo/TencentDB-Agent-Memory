@@ -308,6 +308,16 @@ async function executeWikiTool(
   wikiMgr: WikiSourceManager,
 ): Promise<Response> {
   const { wiki_id, team_id } = row;
+  // The file resolver switches generations via a durable pointer while the
+  // manager swaps its SQLite-backed search view. Keep the whole Agent tool
+  // surface closed until both views have been validated and the operation
+  // fence is durably removed.
+  if (wikiService.isWriteFenced(serviceId, team_id, wiki_id)) {
+    return Response.json(
+      wrapError(409, "source purge/rebuild operation is committing"),
+      { status: 409 },
+    );
+  }
 
   switch (toolName) {
     case "get_info": {
